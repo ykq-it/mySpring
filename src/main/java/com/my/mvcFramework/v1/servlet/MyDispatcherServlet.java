@@ -25,10 +25,10 @@ import java.util.*;
  * @Version v1.0.0
  */
 public class MyDispatcherServlet extends HttpServlet {
-    /** 声明一个配置文件的全局变量，加载配置文件时用来保存application.properties的参数 */
+    /** 声明一个配置，用于持久application.properties配置文件中的建值 */
     private Properties contextConfig = new Properties();
 
-    /** 扫描包时，保存class的名字 */
+    /** 扫描包时，保存所有class的全类名。将被用于反射创建对应实例 */
     private List<String> classNames = new ArrayList<>();
 
     /** IoC容器，即Map，存放的是扫描包下被@MyController和@MyService注解的类的实例 */
@@ -122,7 +122,7 @@ public class MyDispatcherServlet extends HttpServlet {
     }
 
     /**
-     * 功能描述： 调用init方法加载配置文件
+     * 功能描述： servlet初始化
      * @author ykq
      * @date 2020/4/29 11:10
      * @param
@@ -130,13 +130,13 @@ public class MyDispatcherServlet extends HttpServlet {
      */
     @Override
     public void init(ServletConfig config) throws ServletException {
-        // 1、加载配置文件，保存至contextConfig中
+        // 1、加载配置文件，持久至属性Properties的实例contextConfig中
         doLoadConfig(config.getInitParameter("contextConfigLocation"));
 
         // 2、通过contextConfig的scanPackage，扫描相关的类，保存至中
         doScanner(contextConfig.getProperty("scanPackage"));
         
-        // 3、初始化扫描得到的类，创建实例并保存至IoC容器
+        // 3、通过2中获取的所有类的全类名，反射创建实例并保存至IoC容器
         doInstance();
         
         // 4、DI，实现注入
@@ -212,7 +212,7 @@ public class MyDispatcherServlet extends HttpServlet {
                     continue;
                 }
 
-                // 如果没有自定义beanName，则默认根据类型注入
+                // 如果没有自定义beanName，则默认根据类名称注入
                 MyAutowired myAutowired = field.getAnnotation(MyAutowired.class);
                 String beanName = myAutowired.value().trim();
                 // TODO 类名首字母小写的判断
@@ -242,25 +242,27 @@ public class MyDispatcherServlet extends HttpServlet {
      * @return void
      */
     private void doInstance() {
-        // 判断扫描得到的classNames如果是空，则退出
-        if (classNames.isEmpty()) {
+        // 如果没扫描到类，则结束
+         if (classNames.isEmpty()) {
             return;
         }
 
-        // 遍历classNames，通过反射创建对象。但不是所有的类都要创建对象，只有加了注解的才会创建，MyController、MyService
+        // 遍历全类名List-classNames，通过反射创建对象，保存至IoC容器中。但不是所有的类都要创建对象，只有加了@MyController、@MyService注解的才会创建
+        // beanName首先默认取用首字母小写的类名。如果存在多个相同命名的类，则取用注解的value的值
         for (String className : classNames) {
             try {
                 Class clazz = Class.forName(className);
 
                 // 分类讨论Controller和Service
-                // 判断指定类型的注释存在于此元素上
+                // 判断当前类是否注释了@MyController
                 if (clazz.isAnnotationPresent(MyController.class)) {
                     Object instance = clazz.newInstance();
                     // Spring的beanName默认是首字母小写的类名
                     String beanName = toLowFirstCase(clazz.getSimpleName());
                     ioc.put(beanName, instance);
                 } else if (clazz.isAnnotationPresent(MyService.class)) {
-                    // 如果是Service，需要考虑有多实现类的情况，此时多个实现类必须有不同的beanName，所以判断@MyService如果赋值value，则将value作为beanName，否则默认首字母小写的类名
+                    // TODO 如果是Service，需要考虑接口有多个实现类和一个类实现多个接口的情况
+                    // 此处，只适用类实现多个接口，但接口仅有一个实现类
                     MyService myService = (MyService) clazz.getAnnotation(MyService.class);
                     String beanName = myService.value();
                     if ("".equals(beanName.trim())) {
@@ -271,7 +273,7 @@ public class MyDispatcherServlet extends HttpServlet {
                     ioc.put(beanName, instance);
 
                     // TODO 多实现类处理
-                    // 为接口赋值实现类的实例
+                    // 类实现了多个接口，则为所有接口赋值自己的实例，beanName取首字母小写的接口名
                     for (Class i : clazz.getInterfaces()) {
                         if (ioc.containsKey(i.getName())) {
                             throw new Exception("The " + i.getName() + " is exited!");
@@ -309,13 +311,14 @@ public class MyDispatcherServlet extends HttpServlet {
     }
 
     /**
-     * 功能描述： 获取配置文件中需要扫描的包路径，保存所有的类名
+     * 功能描述： 获取配置文件中需要扫描的包路径，获取包下所有类文件的全类名
      * @author ykq
      * @date 2020/4/29 13:54
      * @param
      * @return
      */
     private void doScanner(String scanPackage) {
+        // 遍历文件夹，找到类，并获取其全类名
         // 转换文件路径，将.替换为/。 注意getResource和getResources不一样
         URL url = this.getClass().getClassLoader().getResource("/" + scanPackage.replaceAll("\\.", "/"));
         File classPath = new File(url.getFile());
@@ -335,7 +338,7 @@ public class MyDispatcherServlet extends HttpServlet {
     }
 
     /**
-     * 功能描述： 通过web.xml加载配置文件，保存至Properties中
+     * 功能描述： 通过web.xml加载配置文件，持久化为Properties实例
      * @author ykq
      * @date 2020/4/29 13:30
      * @param
@@ -343,33 +346,26 @@ public class MyDispatcherServlet extends HttpServlet {
      * 找到名叫contextConfigLocation的init-param，使用param-value对应的配置文件
      */
     private void doLoadConfig(String contextConfigLocation) {
-        System.out.println("[加载配置文件]，开始");
-        // 通过类路径找到spring配置文件的路径
-        // 并且将其读取出来放到Properties对象中
-        // 相当于将scanPackage=com.my.demo暂时保存起来
+        // 通过类路径找到spring配置文件的路径，并且将其读取生成流，用于加载Properties
         /* class是指当前类的class对象，getClassLoader()是获取当前的类加载器，什么是类加载器？
             简单点说，就是用来加载java类的,类加载器负责把class文件加载进内存中，
             并创建一个java.lang.Class类的一个实例，也就是class对象，并且每个类的类加载器都不相同。
             getResourceAsStream(path)是用来获取资源的，而类加载器默认是从classPath下获取资源的，因为这下面有class文件，
             所以这段代码总的意思是通过类加载器在classPath目录下获取资源.并且是以流的形式。
             原文链接：https://blog.csdn.net/feeltouch/article/details/83796764 */
-        InputStream is = this.getClass().getClassLoader().getResourceAsStream("application.properties");
+        InputStream is = this.getClass().getClassLoader().getResourceAsStream(contextConfigLocation);
         try {
             contextConfig.load(is);
         } catch (IOException e) {
-            System.out.println("[加载配置文件]，异常");
             e.printStackTrace();
         } finally {
             if (null != is) {
                 try {
-                    System.out.println("[加载配置文件]关闭流");
                     is.close();
                 } catch (IOException e) {
-                    System.out.println("[加载配置文件]关闭流，异常");
                     e.printStackTrace();
                 }
             }
         }
-        System.out.println("[加载配置文件]，结束");
     }
 }
