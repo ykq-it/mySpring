@@ -207,7 +207,7 @@ public class MyDispatcherServlet extends HttpServlet {
             return;
         }
 
-        // TODO entry是什么？
+        // entry是IoC容器的元素集
         // 否则遍历IoC容器的实例，将其中被MyAutowired注解的属性赋值
         for (Map.Entry<String, Object> entry : ioc.entrySet()) {
             // 获取实例中所有被public、protected、private修饰的属性。注意getDeclaredFields与getDeclaredField的不同
@@ -232,7 +232,6 @@ public class MyDispatcherServlet extends HttpServlet {
 
                 try {
                     // 使用反射给属性赋值，set(要被修改的对象，修改后的新实例)
-                    // ioc的entry是<beanName, instance>的一个元素，value是什么？
                     field.set(entry.getValue(), ioc.get(beanName));
                 } catch (IllegalAccessException e) {
                     e.printStackTrace();

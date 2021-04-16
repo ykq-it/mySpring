@@ -16,6 +16,7 @@ import java.io.IOException;
  * @Author ykq
  * @Date 2020/4/29
  * @Version v1.0.0
+ * http://localhost:8080/mySpring_war_exploded/demo/query?name=1
  */
 @MyController
 @MyRequestMapping("/demo")
