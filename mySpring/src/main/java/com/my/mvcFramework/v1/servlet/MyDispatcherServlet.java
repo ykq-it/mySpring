@@ -45,10 +45,11 @@ public class MyDispatcherServlet extends HttpServlet {
     @Override
     protected void doPost(HttpServletRequest req, HttpServletResponse resp) throws IOException {
         try {
+            // 6、根据url，委派给具体的方法
             doDispatcher(req, resp);
         } catch (Exception e) {
             e.printStackTrace();
-            resp.getWriter().write("500 Exception!");
+            resp.getWriter().write("500 Exception! Detail：" + Arrays.toString(e.getStackTrace()));
         }
     }
 
@@ -61,7 +62,8 @@ public class MyDispatcherServlet extends HttpServlet {
      */
     private void doDispatcher(HttpServletRequest req, HttpServletResponse resp) throws IOException, InvocationTargetException, IllegalAccessException {
         String url = req.getRequestURI();
-        String contextPath = req.getContextPath(); //当前页面所在的应用的名字
+        // 当前页面所在的应用的名字
+        String contextPath = req.getContextPath();
         // 去掉url中的项目名，并去掉多余的/
         url = url.replace(contextPath, "").replaceAll("/+", "/");
 
@@ -74,7 +76,7 @@ public class MyDispatcherServlet extends HttpServlet {
         // 获取目标方法
         Method method = handlerMapping.get(url);
 
-        // url带来的参数列表 TODO req.getParameterMap()get的是什么？
+        // url挂参的参数列表
         Map<String, String[]> parameterMap = req.getParameterMap();
 
         // 获取方法的形参列表，形参列表有三类值，Request、Rresponse、自定义参数
@@ -131,19 +133,20 @@ public class MyDispatcherServlet extends HttpServlet {
     @Override
     public void init(ServletConfig config) throws ServletException {
         // 1、加载配置文件，持久至属性Properties的实例contextConfig中
+        // config.getInitParameter("contextConfigLocation")返回的是application.properties
         doLoadConfig(config.getInitParameter("contextConfigLocation"));
 
-        // 2、通过contextConfig的scanPackage，扫描相关的类，保存至中
+        // 2、通过contextConfig的scanPackage，扫描相关的类，保存至内存中
         doScanner(contextConfig.getProperty("scanPackage"));
         
-        // 3、通过2中获取的所有类的全类名，反射创建实例并保存至IoC容器
+        // 3、初始化IoC容器；通过2中获取的所有类的全类名，反射创建实例并保存至IoC容器
         doInstance();
         
         // 4、DI，实现注入
         doAutowired();
 
         // 5、初始化HandlerMapping
-        initHandlerMapping();
+        doInitHandlerMapping();
 
         System.out.println("MySpring framework is init.");
     }
@@ -155,7 +158,7 @@ public class MyDispatcherServlet extends HttpServlet {
      * @param
      * @return void
      */
-    private void initHandlerMapping() {
+    private void doInitHandlerMapping() {
         if (ioc.isEmpty()) {
             return;
         }
@@ -182,6 +185,8 @@ public class MyDispatcherServlet extends HttpServlet {
                 }
 
                 MyRequestMapping myRequestMapping = method.getAnnotation(MyRequestMapping.class);
+
+                // 正则，如果有连续/，统一替换为一个
                 String url = ("/" + baseUrl + "/" + myRequestMapping.value()).replaceAll("/+", "/");
                 handlerMapping.put(url, method);
                 System.out.println("Mapper: " + url + "," + method);
@@ -202,9 +207,11 @@ public class MyDispatcherServlet extends HttpServlet {
             return;
         }
 
+        // TODO entry是什么？
         // 否则遍历IoC容器的实例，将其中被MyAutowired注解的属性赋值
         for (Map.Entry<String, Object> entry : ioc.entrySet()) {
             // 获取实例中所有被public、protected、private修饰的属性。注意getDeclaredFields与getDeclaredField的不同
+            // getDeclaredFields忽略字段的修饰符
             Field[] fields = entry.getValue().getClass().getDeclaredFields();
             // 遍历属性集合，如果被@MyAutowired修饰，则为属性赋值
             for (Field field : fields) {
@@ -215,7 +222,7 @@ public class MyDispatcherServlet extends HttpServlet {
                 // 如果没有自定义beanName，则默认根据类名称注入
                 MyAutowired myAutowired = field.getAnnotation(MyAutowired.class);
                 String beanName = myAutowired.value().trim();
-                // TODO 类名首字母小写的判断
+                // 是否使用类名首字母小写的判断
                 if ("".equals(beanName)) {
                     beanName = field.getType().getName();
                 }
@@ -225,7 +232,7 @@ public class MyDispatcherServlet extends HttpServlet {
 
                 try {
                     // 使用反射给属性赋值，set(要被修改的对象，修改后的新实例)
-                    // TODO ioc的entry的value是什么？
+                    // ioc的entry是<beanName, instance>的一个元素，value是什么？
                     field.set(entry.getValue(), ioc.get(beanName));
                 } catch (IllegalAccessException e) {
                     e.printStackTrace();
@@ -254,7 +261,7 @@ public class MyDispatcherServlet extends HttpServlet {
                 Class clazz = Class.forName(className);
 
                 // 分类讨论Controller和Service
-                // 判断当前类是否注释了@MyController
+                // 判断当前类是否注解了@MyController
                 if (clazz.isAnnotationPresent(MyController.class)) {
                     Object instance = clazz.newInstance();
                     // Spring的beanName默认是首字母小写的类名
@@ -264,9 +271,10 @@ public class MyDispatcherServlet extends HttpServlet {
                     // TODO 如果是Service，需要考虑接口有多个实现类和一个类实现多个接口的情况
                     // 此处，只适用类实现多个接口，但接口仅有一个实现类
                     MyService myService = (MyService) clazz.getAnnotation(MyService.class);
+                    // 默认beanName是MyService的value值
                     String beanName = myService.value();
                     if ("".equals(beanName.trim())) {
-                        // 默认beanName是首字母小写类名
+                        // MyService的value如果为空，则首字母小写类名作为beanName
                         beanName = toLowFirstCase(clazz.getSimpleName());
                     }
                     Object instance = clazz.newInstance();
@@ -276,7 +284,7 @@ public class MyDispatcherServlet extends HttpServlet {
                     // 类实现了多个接口，则为所有接口赋值自己的实例，beanName取首字母小写的接口名
                     for (Class i : clazz.getInterfaces()) {
                         if (ioc.containsKey(i.getName())) {
-                            throw new Exception("The " + i.getName() + " is exited!");
+                            throw new Exception("The " + i.getName() + " is exited!Please use alias!");
                         }
                         ioc.put(i.getName(), instance);
                     }
@@ -285,13 +293,7 @@ public class MyDispatcherServlet extends HttpServlet {
                     continue;
                 }
 
-            } catch (ClassNotFoundException e) {
-                e.printStackTrace();
-            } catch (IllegalAccessException e) {
-                e.printStackTrace();
-            } catch (InstantiationException e) {
-                e.printStackTrace();
-            } catch (Exception e) {
+            }  catch (Exception e) {
                 e.printStackTrace();
             }
         }
@@ -328,10 +330,12 @@ public class MyDispatcherServlet extends HttpServlet {
             if (file.isDirectory()) {
                 doScanner(scanPackage + "." + file.getName());
             }
+            // 阿里的取反写法，不满足调价直接返回，减少嵌套
+            // 如果是诸如.xml等的文件，则直接跳过。
             if (!file.getName().endsWith(".class")) {
                 continue;
             }
-            // 为防止不同包下，有相同名称的类，则将根目录下的全路径作为name
+            // 为防止不同包下，有相同名称的类，则将根目录下的全路径作为name。拿到全类名，用于反射创建实例
             String className = scanPackage + "." + file.getName().replace(".class", "");
             classNames.add(className);
         }
@@ -353,6 +357,7 @@ public class MyDispatcherServlet extends HttpServlet {
             getResourceAsStream(path)是用来获取资源的，而类加载器默认是从classPath下获取资源的，因为这下面有class文件，
             所以这段代码总的意思是通过类加载器在classPath目录下获取资源.并且是以流的形式。
             原文链接：https://blog.csdn.net/feeltouch/article/details/83796764 */
+        // TODO
         InputStream is = this.getClass().getClassLoader().getResourceAsStream(contextConfigLocation);
         try {
             contextConfig.load(is);
